@@ -51,19 +51,30 @@ typedef struct rb_node
 typedef struct stream_ring_buffer rb_t;
 typedef struct stream_rb_data_view rb_data_view_t;
 
-#define ALIGN(x, n)  ( ((x) + ((n)-1))  & ~((n)-1) )
-#define ALIGN_NODE(x) ALIGN(x, sizeof(struct rb_node))
+static inline rb_node_t* offset_to_node(const rb_t *rb, stream_rb_offset_t offset) {
+    return (rb_node_t*)(&rb->buffer[offset] );
+}
 
-#define RB_NODE_TO_OFFSET(p_rb, p_rb_node) (stream_rb_offset_t) ( (void*)(p_rb_node) - (void*)(&(p_rb)->buffer) )
-#define RB_OFFSET_TO_NODE(p_rb, offset) (rb_node_t *)( &(p_rb)->buffer[(offset)] )
-#define RB_NODE_NEXT_NODE(p_rb, p_rb_node) RB_OFFSET_TO_NODE( (p_rb), (p_rb_node)->next_offset )
-//#define RB_OFFSET_NEXT_OFFSET(p_rb, offset) (RB_OFFSET_TO_NODE(p_rb, offset)->next_offset)
-//#define RB_OFFSET_NEXT_NODE(p_rb, offset) (RB_OFFSET_TO_NODE(p_rb, RB_OFFSET_NEXT_OFFSET(p_rb, offset)))
+static inline stream_rb_offset_t node_to_offset(const rb_t *rb, const rb_node_t *node) {
+    return (stream_rb_offset_t) ( (void*)node - (void*)(&rb->buffer) );
+}
+
+static inline stream_rb_size_t size_align_node(stream_rb_size_t x) {
+    stream_rb_size_t align_mask = sizeof(rb_node_t) - 1;
+    return ((x + align_mask) & ~align_mask);
+}
+
+static inline stream_rb_offset_t offset_distance(const rb_t *rb, stream_rb_offset_t start, stream_rb_offset_t end) {
+    // (end < start) means that the next node has wrapped to the start of the buffer
+    return (end < start) ? 
+            (rb->buffer_size - start) + end :
+            (end - start);
+}
 
 #ifdef STREAM_RING_BUFFER_DEBUG
 #include <stdio.h>
 #define DEBUG_LOG(fmt, ...) printf(fmt, __VA_ARGS__)
-void stream_rb_print_state(rb_t *rb) {
+void stream_rb_print_state(const rb_t *rb) {
     printf("rb_t @0x%p\n  buffer @0x%p\n  size: %u\n  used: %u\n  head_offset: %u\n  tail_offset: %u\n", 
         rb,
         rb->buffer,
@@ -73,10 +84,46 @@ void stream_rb_print_state(rb_t *rb) {
         rb->tail_offset
         );
 }
+void stream_rb_traverse_nodes(const rb_t *rb) {
+    printf("Traversing ring buffer @0x%p\n", rb);
+
+    volatile stream_rb_size_t num_nodes, bytes_traversed, data_bytes_traversed;
+    rb_node_t *node;
+    stream_rb_offset_t node_offset;
+
+    num_nodes = 0;
+    bytes_traversed = 0;
+    data_bytes_traversed = 0;
+    
+    node_offset = rb->tail_offset;
+    node = offset_to_node(rb, node_offset);
+
+    while(bytes_traversed < rb->used) {
+
+        stream_rb_size_t this_node_size = (stream_rb_size_t) offset_distance(rb, node_offset, node->next_offset);
+        printf("Node %u\n  offset: %u\n  node_size: %u\n  data_size: %u\n  data: ", 
+            num_nodes, node_offset, this_node_size, node->data_size);
+        int i;
+        for(i = 0; i < node->data_size; i++) {
+            printf("%02X ", ((uint8_t*)node->data)[i]);
+        }
+        printf("\n", "");
+
+        data_bytes_traversed += node->data_size;
+        bytes_traversed += this_node_size;
+
+        num_nodes++;
+        node_offset = node->next_offset;
+        node = offset_to_node(rb, node_offset);
+    }
+
+    printf("Traversal finished\n  num_nodes: %u\n  bytes_traversed: %u\n  data_bytes_traversed: %u\n",
+        num_nodes, bytes_traversed, data_bytes_traversed
+        );
+}
 #else
 #define DEBUG_LOG(fmt, ...)
 #endif
-
 
 int stream_rb_init(rb_t *rb, const uint8_t *buffer, stream_rb_size_t buffer_size) {
     DEBUG_LOG("Init rb @0x%p with buffer @0x%p of size %u\n",
@@ -92,14 +139,6 @@ int stream_rb_init(rb_t *rb, const uint8_t *buffer, stream_rb_size_t buffer_size
     return 0;
 }
 
-static inline bool rb_is_full(rb_t *rb) {
-    return (rb->used >= rb->buffer_size);
-}
-
-static inline bool rb_is_empty(rb_t *rb) {
-    return (rb->used <= 0);
-}
-
 int stream_rb_remove_tail (rb_t * rb) {
     // case that this function is called when the rb is empty
     if (rb->used <= 0) {
@@ -112,15 +151,16 @@ int stream_rb_remove_tail (rb_t * rb) {
     stream_rb_size_t bytes_to_free;
 
     tail_offset = rb->tail_offset;
-    tail = RB_OFFSET_TO_NODE(rb, tail_offset);
+    tail = offset_to_node(rb, tail_offset);
     next_tail_offset = tail->next_offset;
 
     // (next_offset < tail) offset means that the next node has wrapped to the start
     // so current offset to end should be freed.
     // else free the delta between new and current tail offsets.
-    bytes_to_free = (next_tail_offset < tail_offset) ? 
-                        (rb->buffer_size - tail_offset) :
-                        (next_tail_offset - tail_offset);
+    // bytes_to_free = (next_tail_offset < tail_offset) ? 
+    //                     (rb->buffer_size - tail_offset) :
+    //                     (next_tail_offset - tail_offset);
+    bytes_to_free = offset_distance(rb, tail_offset, next_tail_offset);
     
     DEBUG_LOG("rb removing node:\n  used: %u\n  tail_offset: %u\n  bytes_freed: %u\n  next_tail_offset: %u\n",
         rb->used,
@@ -145,13 +185,12 @@ data will not be copied out of bounds of the rb buffer.
 */
 static int stream_rb_soft_add_node(const rb_t *rb, stream_rb_offset_t offset, const uint8_t *in, stream_rb_size_t in_size, stream_rb_offset_t *out_next_offset) {
     int ret = 0;
-    //stream_rb_offset_t head_offset = RB_NODE_TO_OFFSET(rb, rb->head);
     rb_node_t *head;
     stream_rb_size_t requested_size;
     stream_rb_offset_t next_offset;
     
-    head = RB_OFFSET_TO_NODE(rb, offset);
-    requested_size = sizeof(rb_node_t) + ALIGN_NODE(in_size);
+    head = offset_to_node(rb, offset);
+    requested_size = sizeof(rb_node_t) + size_align_node(in_size);
     
     // compute next head offset location.  wrap to start if necessary
     next_offset = (offset + requested_size);
@@ -190,7 +229,7 @@ int stream_rb_add(rb_t *rb, const uint8_t * in, stream_rb_size_t in_size) {
     
     tmp_head_offset = rb->head_offset;
     
-    requested_size = sizeof(rb_node_t) + ALIGN_NODE(in_size);
+    requested_size = sizeof(rb_node_t) + size_align_node(in_size);
     
     // (head_offset + requested_size) = buffer_size 
     // => perfect fit, no wrap.  near end of function, head_offset moved to 0
@@ -234,8 +273,8 @@ stream_rb_add_exit:
     return ret;
 }
 
-int stream_rb_tail_data_view(rb_t *rb, rb_data_view_t *out_node_view) {
-    rb_node_t *tail = RB_OFFSET_TO_NODE(rb, rb->tail_offset);
+void stream_rb_tail_data_view(const rb_t *rb, rb_data_view_t *out_node_view) {
+    rb_node_t *tail = offset_to_node(rb, rb->tail_offset);
     *(uint8_t**)(&out_node_view->data) = (uint8_t*)tail->data;
     *(stream_rb_size_t*)(&out_node_view->length) = tail->data_size;
 }
