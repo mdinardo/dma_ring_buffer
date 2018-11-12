@@ -38,7 +38,7 @@
 #include <string.h>
 #include <stdbool.h>
 
-#include "rb.h"
+#include "stream_rb.h"
 
 #define DEBUG
 
