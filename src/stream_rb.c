@@ -66,8 +66,8 @@ typedef struct rb_node
 } rb_node_t;
 #pragma pack(pop)
 
-typedef struct dma_ring_buffer rb_t;
-typedef struct dma_rb_data_view rb_data_view_t;
+typedef struct stream_ring_buffer rb_t;
+typedef struct stream_rb_data_view rb_data_view_t;
 
 int
 rb_init (rb_t *rb, const uint8_t *buffer, rb_size_t buffer_size)
