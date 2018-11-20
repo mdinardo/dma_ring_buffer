@@ -33,7 +33,9 @@ LINK=gcc
 DEPEND=gcc -MM -MG -MF
 CFLAGS=-I. -I$(PATHU) -I$(PATHS) -DTEST
 
-RESULTS = $(patsubst $(PATHT)Test%.c,$(PATHR)Test%.txt,$(SRCT) )
+TEST_PREFIX := Test_ # names of test c files must begin with this prefix
+
+RESULTS = $(patsubst $(PATHT)$(TEST_PREFIX)%.c,$(PATHR)$(TEST_PREFIX)%.txt,$(SRCT) )
 
 PASSED = `grep -s PASS $(PATHR)*.txt`
 FAIL = `grep -s FAIL $(PATHR)*.txt`
@@ -51,7 +53,7 @@ test: $(BUILD_PATHS) $(RESULTS)
 $(PATHR)%.txt: $(PATHB)%.$(TARGET_EXTENSION)
 	-./$< > $@ 2>&1
 
-$(PATHB)Test%.$(TARGET_EXTENSION): $(PATHO)Test%.o $(PATHO)%.o $(PATHU)unity.o #$(PATHD)Test%.d
+$(PATHB)$(TEST_PREFIX)%.$(TARGET_EXTENSION): $(PATHO)$(TEST_PREFIX)%.o $(PATHO)%.o $(PATHU)unity.o #$(PATHD)Test%.d
 	$(LINK) -o $@ $^
 
 $(PATHO)%.o:: $(PATHT)%.c
