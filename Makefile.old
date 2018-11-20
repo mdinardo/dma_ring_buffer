@@ -1,0 +1,38 @@
+CC := gcc
+CFLAGS := -Wall
+LDFLAGS := -Isrc/
+SRCDIR := src
+OBJDIR := bin
+
+DBG_CFLAGS := -DSTREAM_RING_BUFFER_DEBUG
+
+$(OBJDIR):
+	mkdir -p $@
+
+.PHONY: clean
+clean:
+	rm -rf bin
+
+# bin/%.o: bin/
+$(OBJDIR)/%.o: $(SRCDIR)/%.c | $(OBJDIR)
+	$(CC) -c $(CFLAGS) -o $@ $<
+
+.PHONY: build
+build: $(OBJDIR)/stream_rb.o
+
+.PHONY: build_debug
+build_debug: CFLAGS += $(DBG_CFLAGS)
+build_debug: build
+
+$(OBJDIR)/test: $(OBJDIR)/*.o test/main.c
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^
+
+.PHONY: test
+test: build $(OBJDIR)/test | $(OBJDIR)
+	./$(OBJDIR)/test
+
+.PHONY: test_debug
+test_debug: CFLAGS += $(DBG_CFLAGS)
+test_debug: build_debug $(OBJDIR)/test | $(OBJDIR)
+	./bin/test
+
