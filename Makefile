@@ -13,6 +13,8 @@ else
 	TARGET_EXTENSION=out
 endif
 
+.PHONY: clean_build
+.PHONY: clean_test
 .PHONY: clean
 .PHONY: test
 .PHONY: test_debug
@@ -33,10 +35,13 @@ BUILD_PATHS = $(PATHB) $(PATHD) $(PATHO) $(PATHTO) $(PATHR)
 SRCS = $(wildcard $(PATHS)*.c)
 SRCT = $(wildcard $(PATHT)*.c)
 
+INCLUDE_PATHS = . $(PATHU) $(PATHS)
+INCFLAGS=$(addprefix -I,$(INCLUDE_PATHS))
+
 COMPILE=gcc -c
 LINK=gcc
 DEPEND=gcc -MM -MG -MF
-CFLAGS=-I. -I$(PATHU) -I$(PATHS)
+CFLAGS = $(INCFLAGS) -Wall
 LDFLAGS=
 
 # names of test c files must begin with this prefix.
@@ -55,6 +60,7 @@ build_debug: build
 build: BUILD_PATHS = $(PATHB) $(PATHD) $(PATHO)
 build: $(BUILD_PATHS) $(patsubst $(PATHS)%.c,$(PATHO)%.o,$(SRCS) )
 
+test_debug: CFLAGS += -DTEST
 test_debug: build_debug test
 
 test: CFLAGS += -DTEST
@@ -79,6 +85,7 @@ $(PATHO)%.o:: $(PATHS)%.c
 	$(COMPILE) $(CFLAGS) $< -o $@
 
 # compile unit test object files; goes into test-specific object directory
+$(PATHTO)$(TEST_PREFIX)%.o: CFLAGS += -Wno-incompatible-pointer-types -Wno-pointer-sign # disable these errors to clean up terminal output;
 $(PATHTO)$(TEST_PREFIX)%.o:: $(PATHT)$(TEST_PREFIX)%.c 
 	@echo Trying to build test obj with prefix $(@)
 	$(COMPILE) $(CFLAGS) -O0 $< -o $@
@@ -106,13 +113,17 @@ $(PATHO):
 $(PATHR):
 	$(MKDIR) $(PATHR)
 
-clean:
+clean_build:
 	$(CLEANUP) $(PATHO)*.o
+
+clean_test:
 	$(CLEANUP) $(PATHTO)*.o
 	$(CLEANUP) $(PATHB)*.$(TARGET_EXTENSION)
 	$(CLEANUP) $(PATHR)*.txt
 
-.PRECIOUS: $(PATHB)Test%.$(TARGET_EXTENSION)
+clean: clean_build clean_test
+
+.PRECIOUS: $(PATHB)$(TEST_PREFIX)%.$(TARGET_EXTENSION)
 .PRECIOUS: $(PATHD)%.d
 .PRECIOUS: $(PATHO)%.o
 .PRECIOUS: $(PATHTO)%.o
