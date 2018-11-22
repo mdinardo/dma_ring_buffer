@@ -15,6 +15,9 @@ endif
 
 .PHONY: clean
 .PHONY: test
+.PHONY: test_debug
+.PHONY: build
+.PHONY: build_debug
 
 PATHU = unity/src/
 PATHS = src/
@@ -22,18 +25,23 @@ PATHT = test/
 PATHB = build/
 PATHD = build/depends/
 PATHO = build/objs/
+PATHTO = build/test_objs/
 PATHR = build/results/
 
-BUILD_PATHS = $(PATHB) $(PATHD) $(PATHO) $(PATHR)
+BUILD_PATHS = $(PATHB) $(PATHD) $(PATHO) $(PATHTO) $(PATHR)
 
+SRCS = $(wildcard $(PATHS)*.c)
 SRCT = $(wildcard $(PATHT)*.c)
 
 COMPILE=gcc -c
 LINK=gcc
 DEPEND=gcc -MM -MG -MF
-CFLAGS=-I. -I$(PATHU) -I$(PATHS) -DTEST
+CFLAGS=-I. -I$(PATHU) -I$(PATHS)
+LDFLAGS=
 
-TEST_PREFIX := Test_ # names of test c files must begin with this prefix
+# names of test c files must begin with this prefix.
+# No spaces! all whitespace is included
+TEST_PREFIX:=Test_
 
 RESULTS = $(patsubst $(PATHT)$(TEST_PREFIX)%.c,$(PATHR)$(TEST_PREFIX)%.txt,$(SRCT) )
 
@@ -41,6 +49,15 @@ PASSED = `grep -s PASS $(PATHR)*.txt`
 FAIL = `grep -s FAIL $(PATHR)*.txt`
 IGNORE = `grep -s IGNORE $(PATHR)*.txt`
 
+build_debug: CFLAGS += -DSTREAM_RING_BUFFER_DEBUG
+build_debug: build
+
+build: BUILD_PATHS = $(PATHB) $(PATHD) $(PATHO)
+build: $(BUILD_PATHS) $(patsubst $(PATHS)%.c,$(PATHO)%.o,$(SRCS) )
+
+test_debug: build_debug test
+
+test: CFLAGS += -DTEST
 test: $(BUILD_PATHS) $(RESULTS)
 	@echo "-----------------------\nIGNORES:\n-----------------------"
 	@echo "$(IGNORE)"
@@ -53,17 +70,23 @@ test: $(BUILD_PATHS) $(RESULTS)
 $(PATHR)%.txt: $(PATHB)%.$(TARGET_EXTENSION)
 	-./$< > $@ 2>&1
 
-$(PATHB)$(TEST_PREFIX)%.$(TARGET_EXTENSION): $(PATHO)$(TEST_PREFIX)%.o $(PATHO)%.o $(PATHU)unity.o #$(PATHD)Test%.d
-	$(LINK) -o $@ $^
+$(PATHB)$(TEST_PREFIX)%.$(TARGET_EXTENSION): $(PATHTO)$(TEST_PREFIX)%.o $(PATHU)unity.o $(PATHO)%.o #$(PATHD)$(TEST_PREFIX)%.d
+	$(LINK) $(LDFLAGS) -o $@ $^
 
-$(PATHO)%.o:: $(PATHT)%.c
-	$(COMPILE) $(CFLAGS) $< -o $@
-
+# compile target code; goes into object directory
 $(PATHO)%.o:: $(PATHS)%.c
+	@echo Trying to build obj $(@)
 	$(COMPILE) $(CFLAGS) $< -o $@
 
-$(PATHO)%.o:: $(PATHU)%.c $(PATHU)%.h
+# compile unit test object files; goes into test-specific object directory
+$(PATHTO)$(TEST_PREFIX)%.o:: $(PATHT)$(TEST_PREFIX)%.c 
+	@echo Trying to build test obj with prefix $(@)
+	$(COMPILE) $(CFLAGS) -O0 $< -o $@
+
+# compile unity and stick the object file with the test objects
+$(PATHTO)%.o:: $(PATHU)%.c $(PATHU)%.h
 	$(COMPILE) $(CFLAGS) $< -o $@
+#
 
 $(PATHD)%.d:: $(PATHT)%.c
 	$(DEPEND) $@ $<
@@ -74,6 +97,9 @@ $(PATHB):
 $(PATHD):
 	$(MKDIR) $(PATHD)
 
+$(PATHTO):
+	$(MKDIR) $(PATHTO)
+
 $(PATHO):
 	$(MKDIR) $(PATHO)
 
@@ -82,10 +108,12 @@ $(PATHR):
 
 clean:
 	$(CLEANUP) $(PATHO)*.o
+	$(CLEANUP) $(PATHTO)*.o
 	$(CLEANUP) $(PATHB)*.$(TARGET_EXTENSION)
 	$(CLEANUP) $(PATHR)*.txt
 
 .PRECIOUS: $(PATHB)Test%.$(TARGET_EXTENSION)
 .PRECIOUS: $(PATHD)%.d
 .PRECIOUS: $(PATHO)%.o
+.PRECIOUS: $(PATHTO)%.o
 .PRECIOUS: $(PATHR)%.txt
